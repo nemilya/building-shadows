@@ -1,7 +1,8 @@
 "use strict";
 
 const MIN_ZOOM = 15;
-const MAX_BBOX_DEG = 0.07;
+const MAX_BBOX_DEG = 0.075; // сервер принимает до 0.08°
+const SHADOW_MARGIN_M = 400; // здания за краем экрана, чьи тени попадают в кадр
 const RAY_LENGTH_M = 120;
 const MONTHS = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
 const STATE_TEXT = { sun: "Солнце", shade: "Тень", night: "Ночь", inside: "Внутри здания" };
@@ -102,16 +103,11 @@ let initialized = false;
 function initLayers() {
   if (initialized || !map.isStyleLoaded()) return;
   initialized = true;
-  map.addSource("shadows", { type: "geojson", data: empty });
   map.addSource("buildings", { type: "geojson", data: empty, promoteId: "id" });
   map.addSource("ray", { type: "geojson", data: empty });
 
-  map.addLayer({
-    id: "shadows",
-    type: "fill",
-    source: "shadows",
-    paint: { "fill-color": cssVar("--shadow-fill"), "fill-opacity": 0.42, "fill-antialias": false },
-  });
+  shadowLayer = new ShadowLayer({ color: hexToRgb(cssVar("--shadow-fill")), opacity: 0.42 });
+  map.addLayer(shadowLayer);
   map.addLayer({
     id: "ray",
     type: "line",
@@ -148,13 +144,14 @@ function initLayers() {
 
   map.on("moveend", () => {
     requestBuildings();
-    requestShadows();
+    requestSunDay();
     writeHash();
   });
 
   loadInfo();
   requestBuildings();
-  onTimeChanged();
+  requestSunDay();
+  onTimeChanged(false);
   requestPoint();
   requestYear();
 }
@@ -185,10 +182,10 @@ async function getJSON(url, signal) {
   return res.json();
 }
 
-const status = { buildings: "", shadows: "", point: "", source: "" };
+const status = { buildings: "", sun: "", point: "", source: "" };
 function setStatus(key, text) {
   status[key] = text;
-  $("status").textContent = [status.buildings, status.shadows, status.point].filter(Boolean)[0] || status.source;
+  $("status").textContent = [status.buildings, status.sun, status.point].filter(Boolean)[0] || status.source;
 }
 
 async function loadInfo() {
@@ -210,8 +207,10 @@ function viewBbox() {
 const bboxStr = (b) => b.map((x) => x.toFixed(5)).join(",");
 const contains = (outer, inner) =>
   outer && outer[0] <= inner[0] && outer[1] <= inner[1] && outer[2] >= inner[2] && outer[3] >= inner[3];
-function padBbox(b, k) {
-  const dx = (b[2] - b[0]) * k, dy = (b[3] - b[1]) * k;
+function padBbox(b, k, meters = 0) {
+  const lat = ((b[1] + b[3]) / 2) * (Math.PI / 180);
+  const dx = (b[2] - b[0]) * k + meters / (111320 * Math.cos(lat));
+  const dy = (b[3] - b[1]) * k + meters / 110540;
   const out = [b[0] - dx, b[1] - dy, b[2] + dx, b[3] + dy];
   // не выходим за лимит API
   const cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2, h = MAX_BBOX_DEG / 2;
@@ -226,7 +225,7 @@ async function requestBuildings() {
   if (tooFar) return;
   const view = viewBbox();
   if (contains(buildingsBbox, view)) return;
-  const bbox = padBbox(view, 0.25);
+  const bbox = padBbox(view, 0.15, SHADOW_MARGIN_M);
   buildingsCtl?.abort();
   buildingsCtl = new AbortController();
   setStatus("buildings", "Загрузка зданий…");
@@ -234,6 +233,7 @@ async function requestBuildings() {
     const data = await getJSON(`/api/buildings?bbox=${bboxStr(bbox)}`, buildingsCtl.signal);
     buildingsBbox = bbox;
     map.getSource("buildings").setData(data);
+    shadowLayer.setBuildings(data);
     applyBlocker();
     setStatus("buildings", "");
   } catch (err) {
@@ -241,42 +241,39 @@ async function requestBuildings() {
   }
 }
 
-let shadowsCtl = null;
-let shadowsTimer = null;
-let shadowsKey = "";
-let shadowsWaiters = [];
-function requestShadows(immediate = false) {
-  clearTimeout(shadowsTimer);
-  return new Promise((resolve) => {
-    shadowsWaiters.push(resolve);
-    shadowsTimer = setTimeout(() => {
-      const waiters = shadowsWaiters;
-      shadowsWaiters = [];
-      fetchShadows().finally(() => waiters.forEach((r) => r()));
-    }, immediate ? 0 : 120);
-  });
-}
-async function fetchShadows() {
-  if (map.getZoom() < MIN_ZOOM) {
-    map.getSource("shadows")?.setData(empty);
-    shadowsKey = "";
-    return;
-  }
-  const bbox = padBbox(viewBbox(), 0.15);
-  const key = `${bboxStr(bbox)}|${state.date}|${state.minute}`;
-  if (key === shadowsKey) return;
-  shadowsCtl?.abort();
-  shadowsCtl = new AbortController();
-  setStatus("shadows", "Расчёт теней…");
+// Положение солнца на день приходит с сервера (одна формула — в Python),
+// тени рисует ShadowLayer на GPU, поэтому смена времени мгновенная.
+let shadowLayer = null;
+let sunDay = null;
+let sunDayCtl = null;
+async function requestSunDay() {
+  const c = map.getCenter();
+  const q = new URLSearchParams({ lat: c.lat.toFixed(2), lon: c.lng.toFixed(2), date: state.date, step: "5" });
+  const key = q.toString();
+  if (sunDay?.key === key) return;
+  sunDayCtl?.abort();
+  sunDayCtl = new AbortController();
+  setStatus("sun", "Расчёт положения солнца…");
   try {
-    const url = `/api/shadows?bbox=${bboxStr(bbox)}&date=${state.date}&time=${fmtMinute(state.minute)}`;
-    const data = await getJSON(url, shadowsCtl.signal);
-    map.getSource("shadows").setData(data);
-    shadowsKey = key;
-    setStatus("shadows", "");
+    const data = await getJSON(`/api/sun/day?${q}`, sunDayCtl.signal);
+    sunDay = { key, step: data.step, samples: data.samples };
+    applySun();
+    setStatus("sun", "");
   } catch (err) {
-    if (err.name !== "AbortError") setStatus("shadows", `Ошибка: ${err.message}`);
+    if (err.name !== "AbortError") setStatus("sun", `Ошибка: ${err.message}`);
   }
+}
+
+function applySun() {
+  if (!sunDay || !shadowLayer) return;
+  const s = sunDay.samples[Math.min(sunDay.samples.length - 1, Math.floor(state.minute / sunDay.step))];
+  shadowLayer.setSun(s.azimuth, s.altitude);
+  updateLight(s.azimuth, s.altitude);
+}
+
+function hexToRgb(hex) {
+  const v = parseInt(hex.replace("#", ""), 16);
+  return [(v >> 16) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255];
 }
 
 let pointCtl = null;
@@ -350,7 +347,7 @@ function setDate(iso) {
   $("date").value = iso;
   $("day").value = dayOfYear(iso);
   state.timeline = null;
-  requestShadows();
+  requestSunDay();
   requestPoint(150);
   if (yearChanged) requestYear();
   highlightMonth();
@@ -378,10 +375,8 @@ function onTimeChanged(fetch = true) {
   renderTimelineCursor();
   renderCurrentState();
   updateRay();
-  if (fetch) {
-    requestShadows();
-    requestPoint(350); // уточняет здание, закрывающее солнце
-  }
+  applySun();
+  if (fetch) requestPoint(350); // уточняет здание, закрывающее солнце
 }
 
 function currentSample() {
@@ -394,7 +389,6 @@ function updateRay() {
   const s = currentSample();
   const src = map.getSource("ray");
   if (!src) return;
-  if (s) updateLight(s.azimuth, s.altitude);
   if (!s || s.altitude <= 0) {
     src.setData(empty);
     return;
@@ -640,11 +634,8 @@ $("play").addEventListener("click", () => {
 });
 async function playLoop() {
   while (playing) {
-    const started = performance.now();
-    setMinute(state.minute + 10, { fetch: false });
-    await requestShadows(true);
-    const wait = 120 - (performance.now() - started);
-    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    setMinute(state.minute + 5, { fetch: false });
+    await new Promise((r) => setTimeout(r, 60));
   }
   requestPoint();
 }

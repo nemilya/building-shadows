@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -31,7 +31,7 @@ from .solar import sun_day, sun_position
 log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
 
-MAX_BBOX_DEG = 0.05  # ограничение размера запроса (~5.5 км по широте)
+MAX_BBOX_DEG = 0.08  # ограничение размера запроса (~9 км по широте)
 SHADOW_MARGIN_M = 400.0  # здания за пределами экрана, чьи тени в него попадают
 
 app = FastAPI(title="Building shadows", version="0.1.0")
@@ -139,6 +139,24 @@ def api_sun(
 ):
     dt = local_datetime(date_, time_, tz_at(lat, lon, tz))
     return sun_info(lat, lon, dt)
+
+
+@app.get("/api/sun/day")
+def api_sun_day(
+    lat: float = Query(..., ge=-90, le=90),
+    lon: float = Query(..., ge=-180, le=180),
+    date_: date = Query(..., alias="date"),
+    step: int = Query(5, ge=1, le=60),
+    tz: str | None = None,
+):
+    """Положение солнца на весь день с шагом ``step`` минут — для отрисовки теней на клиенте."""
+    zone = tz_at(lat, lon, tz)
+    start = datetime.combine(date_, time(0, 0), tzinfo=zone)
+    samples = []
+    for minute in range(0, 24 * 60, step):
+        pos = sun_position(start + timedelta(minutes=minute), lat, lon)
+        samples.append({"minute": minute, "azimuth": round(pos.azimuth, 3), "altitude": round(pos.altitude, 3)})
+    return {"lat": lat, "lon": lon, "date": date_.isoformat(), "timezone": str(zone), "step": step, "samples": samples}
 
 
 @app.get("/api/buildings")

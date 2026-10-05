@@ -62,3 +62,12 @@ def test_sun_endpoint_and_bad_time(client):
     assert ok.status_code == 200 and ok.json()["altitude"] > 50
     bad = client.get("/api/sun", params={"lat": 56.8385, "lon": 60.6057, "date": "2026-06-21", "time": "25:99"})
     assert bad.status_code == 400
+
+
+def test_sun_day_matches_sun_endpoint(client):
+    day = client.get("/api/sun/day", params={"lat": 56.84, "lon": 60.61, "date": "2026-06-21", "step": 5}).json()
+    assert day["timezone"] == "Asia/Yekaterinburg" and len(day["samples"]) == 288
+    noon = day["samples"][13 * 12]
+    assert noon["minute"] == 13 * 60
+    one = client.get("/api/sun", params={"lat": 56.84, "lon": 60.61, "date": "2026-06-21", "time": "13:00"}).json()
+    assert abs(noon["azimuth"] - one["azimuth"]) < 0.01 and abs(noon["altitude"] - one["altitude"]) < 0.01
