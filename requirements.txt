@@ -1,0 +1,6 @@
+fastapi>=0.110
+uvicorn>=0.29
+shapely>=2.1
+numpy>=1.26
+requests>=2.31
+timezonefinder>=6.5

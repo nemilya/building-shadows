@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Тени зданий</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='4' fill='%23eda100'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div id="map"></div>
+
+  <aside id="panel">
+    <header class="panel-head">
+      <h1>Тени зданий</h1>
+      <button id="collapse" class="icon-btn" type="button" aria-label="Свернуть панель" title="Свернуть">▾</button>
+    </header>
+
+    <div class="panel-body">
+      <section class="controls">
+        <div class="row">
+          <label for="date">Дата</label>
+          <input id="date" type="date">
+        </div>
+        <div class="presets" role="group" aria-label="Быстрый выбор даты">
+          <button type="button" data-preset="03-20">Равноденствие</button>
+          <button type="button" data-preset="06-21">21 июня</button>
+          <button type="button" data-preset="12-21">21 декабря</button>
+          <button type="button" data-preset="today">Сегодня</button>
+        </div>
+        <input id="day" type="range" min="1" max="365" step="1" aria-label="День года">
+
+        <div class="row time-row">
+          <label for="time">Время</label>
+          <output id="time-label">12:00</output>
+          <button id="play" type="button" class="icon-btn" aria-label="Анимация дня" title="Проиграть день">▶</button>
+          <button id="now" type="button" class="link-btn">сейчас</button>
+        </div>
+        <input id="time" type="range" min="0" max="1435" step="5" value="720" aria-label="Время суток">
+
+        <div class="row">
+          <label for="obs-height" title="Высота точки над землёй, например окно 5-го этажа ≈ 13 м">Высота точки, м</label>
+          <input id="obs-height" type="number" min="0" max="300" step="0.5" value="1.5">
+        </div>
+        <div class="row">
+          <label for="coords">Координаты</label>
+          <input id="coords" type="text" spellcheck="false" placeholder="56.8380, 60.6057">
+        </div>
+      </section>
+
+      <section class="point" aria-live="polite">
+        <div id="state" class="state">Кликните по карте или перетащите метку</div>
+        <dl class="facts">
+          <div><dt>Солнце</dt><dd id="sun-pos">—</dd></div>
+          <div><dt>Восход / закат</dt><dd id="sun-rise">—</dd></div>
+          <div><dt>Прямое солнце за день</dt><dd id="sun-total">—</dd></div>
+        </dl>
+
+        <figure class="chart">
+          <figcaption>Солнце и тень в точке за день</figcaption>
+          <div class="legend">
+            <span><i class="sw sw-sun"></i>Солнце</span>
+            <span><i class="sw sw-shade"></i>Тень</span>
+            <span><i class="sw sw-night"></i>Ночь</span>
+          </div>
+          <div id="timeline" class="timeline"></div>
+          <div class="axis"><span>0</span><span>6</span><span>12</span><span>18</span><span>24</span></div>
+        </figure>
+
+        <figure class="chart">
+          <figcaption>Часы прямого солнца по месяцам <span class="muted">(15-е число)</span></figcaption>
+          <div class="legend">
+            <span><i class="sw sw-sun"></i>Прямое солнце</span>
+            <span><i class="sw sw-night"></i>Световой день</span>
+          </div>
+          <div id="year" class="year"></div>
+        </figure>
+      </section>
+
+      <section class="map-legend">
+        <span><i class="sw sw-bld"></i>Высота из данных</span>
+        <span><i class="sw sw-bld-est"></i>Высота оценена</span>
+        <span><i class="sw sw-shadow"></i>Тень</span>
+        <span><i class="sw sw-blocker"></i>Закрывает солнце</span>
+      </section>
+
+      <footer class="foot">
+        <label class="check"><input id="pitch" type="checkbox" checked> 3D</label>
+        <span id="status" class="muted"></span>
+      </footer>
+    </div>
+  </aside>
+
+  <div id="tooltip" class="tooltip" hidden></div>
+  <div id="zoom-hint" class="zoom-hint" hidden>Приблизьте карту, чтобы увидеть здания и тени</div>
+
+  <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
